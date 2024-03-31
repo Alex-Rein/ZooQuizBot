@@ -1,4 +1,5 @@
 #  Тема викторины — «Какое у вас тотемное животное?»
+#  Redis data names: 'user_question', 'user_data', message.chat.id for user messages to handle
 
 import telebot
 from telebot import types
@@ -31,25 +32,27 @@ def set_user_question_number(uid, value):
 @bot.message_handler(commands=['start', 'help'])
 def cmd_start(message: types.Message):
     cid = str(message.chat.id)
+    clear(message)
     if not rs.hget('user_data', cid):
-        rs.hset('user_data', str(cid), '0000')
+        rs.hset('user_data', cid, '0000')
 
     markup = telebot.util.quick_markup({'Начать викторину!': {'callback_data': 'quiz'},
                                         'Информация': {'callback_data': 'opeka_info'}})
 
-    bot.send_message(message.chat.id, 'Привет, %s! Предлогаю поучавствовать '
-                                      'в небольшой викторине «Какое у вас тотемное животное?» '
-                                      'и попробовать выяснить какое животное тебе близко по духу! '
-                                      'Делается это чисто в развлекательных целях и для того чтобы '
-                                      'немного прикоснуться к миру братьев меньших, так что без обид!'
-                                      % message.chat.first_name,
-                     reply_markup=markup)
+    m = bot.send_message(message.chat.id, 'Привет, %s! Предлогаю поучавствовать '
+                                          'в небольшой викторине «Какое у вас тотемное животное?» '
+                                          'Делается это чисто в развлекательных целях и для того чтобы '
+                                          'немного прикоснуться к миру братьев меньших, так что без обид!'
+                         % message.chat.first_name,
+                         reply_markup=markup, disable_notification=True)
+    rs.lpush(str(cid), m.message_id)
 
 
 @bot.message_handler(commands=['reset'])
 def cmd_reset(message: types.Message):
+    clear(message)
     cid = message.chat.id
-    bot.send_message(cid, 'Хорошо! Давай начнем сначала.')
+    bot.send_message(cid, 'Хорошо! Давай начнем сначала.', disable_notification=True)
     set_user_question_number(cid, 0)
     rs.hset('user_data', str(cid), '0000')
     next_question(message)
@@ -57,24 +60,36 @@ def cmd_reset(message: types.Message):
 
 @bot.message_handler(commands=['score'])  # ДЕБАГ КОМАНДА
 def dbg_score(message: types.Message):
-    bot.send_message(message.chat.id, message.from_user.username)
+    bot.send_message(message.chat.id, message.from_user.username, disable_notification=True)
     if message.from_user.username == 'Darkozavr':
         var = rs.hget('user_data', str(message.chat.id))
-        bot.send_message(message.chat.id, var)
+        bot.send_message(message.chat.id, var, disable_notification=True)
 
 
-@bot.message_handler(commands=['clear'])  # ДЕБАГ КОМАНДА
-def dbg_clear(message: types.Message):
-    bot.edit_message_reply_markup(chat_id=message.chat.id)
-    # ДОБАВИТЬ ЛИСТЕНЕР ДЛЯ УДАЛЕНИЯ ПРЕДЫДУЩИХ СООБЩЕНИЙ ПО ИХ АЙДИ
-    # ИЛИ УДАЛЯТЬ ПРИ ПЕРЕЗАПУСКЕ ВОПРОСОВ
+@bot.message_handler(commands=['clear'])
+def clear(message: types.Message):
+    cid = str(message.chat.id)
+    if rs.llen(cid):
+        for _ in range(rs.llen(cid)):
+            m = rs.lpop(cid)
+            # bot.delete_message(str(cid), int(m))
+            try:
+                bot.edit_message_reply_markup(chat_id=int(cid),
+                                              message_id=int(m),
+                                              reply_markup=None)
+            except telebot.apihelper.ApiTelegramException as e:
+                pass
+
 
 @bot.callback_query_handler(func=lambda callback: True)
 def callback_handler(callback: types.CallbackQuery):
-    bot.edit_message_reply_markup(chat_id=callback.message.chat.id,
-                                  message_id=callback.message.message_id)
-    bot.delete_message()
     cm = callback.message
+    try:
+        bot.edit_message_reply_markup(chat_id=cm.chat.id,
+                                      message_id=cm.message_id,
+                                      reply_markup=None)
+    except telebot.apihelper.ApiTelegramException as e:
+        pass
     if callback.data == 'start':
         cmd_start(callback.message)
     elif callback.data == 'quiz':
@@ -95,21 +110,17 @@ def text_handler(message: types.Message):
     cid = str(message.chat.id)
     if not rs.hget('user_data', cid):
         markup = telebot.util.quick_markup({'Начало!': {'callback_data': 'start'}})
-        bot.send_message(message.chat.id,
-                         'Не знаешь с чего начать? Попробуй кликнуть тут!',
-                         reply_markup=markup)
+        m = bot.send_message(message.chat.id,
+                             'Не знаешь с чего начать? Попробуй кликнуть тут!',
+                             reply_markup=markup, disable_notification=True)
+        rs.lpush(cid, m.message_id)
     else:
         markup = telebot.util.quick_markup({'Начало!': {'callback_data': 'start'},
-                                   'К викторине': {'callback_data': 'quiz'}})
-        bot.send_message(message.chat.id,
-                         'Что то не так? Мы можем вернуться в начало или же '
-                         'к последнему вопросу викторины.',
-                         reply_markup=markup)
-
-    # if message.text not in [x.command for x in bot.get_my_commands()]:
-    #     bot.send_message(message.chat.id,
-    #                      'Не знаешь с чего начать? Попробуй кликнуть тут!',
-    #                      reply_markup=markup)
+                                            'К викторине': {'callback_data': 'quiz'}})
+        m = bot.send_message(message.chat.id, 'Что то не так? Мы можем вернуться в начало или же '
+                                              'к последнему вопросу викторины.', reply_markup=markup,
+                             disable_notification=True)
+        rs.lpush(cid, m.message_id)
 
 
 def next_question(message: types.Message):
@@ -120,7 +131,7 @@ def next_question(message: types.Message):
     if q_num >= len(quiz):
         bot.send_message(message.chat.id, 'Это был последний вопрос, а сейчас посмотрим'
                                           ' что у нас получилось :) Чтобы попробовать еще раз'
-                                          ' восользуйтесь командой /reset')
+                                          ' восользуйтесь командой /reset', disable_notification=True)
         get_quiz_result(message)
         return
 
@@ -134,7 +145,8 @@ def next_question(message: types.Message):
             num += 1
 
     markup = telebot.util.quick_markup(btns, row_width=2)
-    bot.send_message(cid, text, reply_markup=markup)
+    m = bot.send_message(cid, text, reply_markup=markup, disable_notification=True)
+    rs.lpush(str(cid), m.message_id)
 
 
 def after_answer_react(message: types.Message, answer_num):
@@ -143,7 +155,7 @@ def after_answer_react(message: types.Message, answer_num):
     quiz = Quiz.quiz.copy()
 
     if q_num >= len(quiz):
-        bot.send_message(cid, 'Ошибка')
+        # bot.send_message(cid, 'Ошибка', disable_notification=True)
         return
 
     for que in quiz[q_num]:
@@ -170,7 +182,7 @@ def after_answer_react(message: types.Message, answer_num):
 
 def get_quiz_result(message: types.Message):
     cid = message.chat.id
-    bot.send_message(cid, 'Победа! Картинка будет тут')  # ДЕБАГ ТЕКСТ
+    bot.send_message(cid, 'Победа! Картинка будет тут', disable_notification=True)  # ДЕБАГ ТЕКСТ
 
 
 bot.polling()
