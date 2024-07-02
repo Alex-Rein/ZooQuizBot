@@ -1,5 +1,8 @@
 # TODO нужно ли сделать кнопку обновления инстанса quiz в основном приложении?
 # реализованные типы ответов feature - плотоядное, травоядное (1, 0), group - одиночка или стайное (1, 0), var - баллы
+import json
+
+
 class Quiz:  # класс с викториной
     q1 = {'text': 'Что из перечисленного вам кажется ближе к душе?',
           'answers': {'Находиться в шумной компании друзей': ('group', 1),
@@ -52,9 +55,9 @@ class Quiz:  # класс с викториной
         return len(self.quiz)
 
 
-class Animal:  # класс для хранения и вывода результата викторины
+class Animals:  # класс для хранения и вывода результата викторины
     @staticmethod
-    def get_animal(result):
+    def get_animal_data(result):
         prefix = ''
         if result >= 1000:  # s - стайное, o - одиночное, // p - плотоядное, t - травоядное
             if (result - 1000) >= 100:  # group/feature
@@ -85,86 +88,89 @@ class Animal:  # класс для хранения и вывода резуль
 # sp st op ot
 animals = {
     'sp0': {
-        'name': '',
+        'name': 'Дельфин',
         'description': '',
-        'image': '',
+        'image': 'Дельфин.jpg',
     },
     'sp1': {
-        'name': '',
+        'name': 'Пингвин',
         'description': '',
-        'image': '',
+        'image': 'Пингвин.jpg',
     },
     'sp2': {
-        'name': '',
+        'name': 'Лиса',
         'description': '',
-        'image': '',
+        'image': 'Лиса.jpg',
     },
     'sp3': {
-        'name': '',
+        'name': 'Лев',
         'description': '',
-        'image': '',
+        'image': 'Лев.jpg',
     },
     'op0': {
-        'name': '',
+        'name': 'Неясыть',
         'description': '',
-        'image': '',
+        'image': 'Неясыть.jpg',
     },
     'op1': {
-        'name': '',
+        'name': 'Белый медведь',
         'description': '',
-        'image': '',
+        'image': 'Белый медведь.jpg',
     },
     'op2': {
-        'name': '',
+        'name': 'Куница',
         'description': '',
-        'image': '',
+        'image': 'Куница.jpg',
     },
     'op3': {
-        'name': '',
+        'name': 'Акула',
         'description': '',
-        'image': '',
+        'image': 'Акула.jpg',
     },
     'st0': {
-        'name': '',
+        'name': 'Капибара',
         'description': '',
-        'image': '',
+        'image': 'Капибара.jpg',
     },
     'st1': {
-        'name': '',
+        'name': 'Лама',
         'description': '',
-        'image': '',
+        'image': 'Лама.jpg',
     },
     'st2': {
-        'name': '',
+        'name': 'Лемур',
         'description': '',
-        'image': '',
+        'image': 'Лемур.jpg',
     },
     'st3': {
-        'name': '',
+        'name': 'Газель',
         'description': '',
-        'image': '',
+        'image': 'Газель.jpg',
     },
     'ot0': {
-        'name': '',
+        'name': 'Панда',
         'description': '',
-        'image': '',
+        'image': 'Панда.jpg',
     },
     'ot1': {
-        'name': '',
+        'name': 'Коала',
         'description': '',
-        'image': '',
+        'image': 'Коала.jpg',
     },
     'ot2': {
-        'name': '',
+        'name': 'Хомяк',
         'description': '',
-        'image': '',
+        'image': 'Хомяк.jpg',
     },
     'ot3': {
-        'name': '',
+        'name': 'Белка',
         'description': '',
-        'image': '',
+        'image': 'Белка.jpg',
     }
 }
+
+# with open('quiz_animals', 'wt') as f:
+#     f.write(json.dumps(animals))
 
 # sp Волки, львы, дельфины, лисы, касатка, Пингвин      дельфин, пигвин, волк, лев
 # op Акула, крокодил, белый медведь, пантера, леопард Неясыть Куница рысь медоед       Неясыть Белый медведь, Куница. Акула

@@ -19,6 +19,7 @@ def _init_():
     url = 'https://moscowzoo.ru/about/guardianship/waiting-guardianship'
     date = datetime.now().date()
     previous_date = rs.hget('meta', 'update')
+    # previous_date = '2020-01-01'  # FIXME дебаг фича
     if previous_date:
         previous_date = datetime.strptime(previous_date, '%Y-%m-%d').date()
     else:
@@ -31,7 +32,7 @@ def _init_():
             with open('zoo_guardianship', 'wt') as f:
                 f.write(json.dumps(driver.page_source))
                 soup = BeautifulSoup(driver.page_source, 'lxml')
-            animals = soup.find_all('div', class_='waiting-for-guardian-animals__item animal')
+            animals = soup.find_all('a', class_='waiting-for-guardian-animals__item animal')
             data = []
             for animal in animals:
                 name = animal.find_next(class_='animal__name').text
@@ -44,7 +45,7 @@ def _init_():
 
 def random_animal():
     """Возвращает кортеж (name, url) с именем и ссылкой на изображение животного"""
-    with open('zoo_animals2', 'rt') as f:
+    with open('zoo_animals', 'rt') as f:
         data = json.loads(f.readline())
     rand = randrange(len(data))
     return data[rand]  # name и url животного
