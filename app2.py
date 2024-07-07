@@ -1,11 +1,14 @@
 #  Тема викторины — «Какое у вас тотемное животное?»
-#  Redis data names: 'user_question', 'user_data', (message.chat.id) ключи для работы с редисом
+#  Редис ключи: 'user_question' - какой вопрос следующий, 'user_data' - итог опроса, 'user_id' - id пользователя
+#  Редис ключи: cid - простое сообщение, cid+'media' - медиа сообщение
 #  При первом запуске (и раз в неделю) подтягиваются картинки через selenium,
 #  выставлено 10 секунд ожидания для их прогрузки
+import datetime
 
 import telebot.util
-from telebot import types, logger, asyncio_helper
+from telebot import types, logger, asyncio_helper, asyncio_filters
 from telebot.async_telebot import AsyncTeleBot
+from telebot.asyncio_storage import StateRedisStorage
 from telebot.custom_filters import IsAdminFilter
 import requests
 import asyncio
@@ -22,19 +25,21 @@ from pathlib import Path
 from random import randrange
 
 
-from config import (TOKEN, REDIS_HOST, REDIS_PORT, MANAGER_ID,
+from config import (TOKEN, REDIS_HOST, REDIS_PORT, MANAGER_ID, States,
                     VKTOKEN, VK_APP_ID, VK_SERVICE_KEY, VK_SECRET_KEY, VK_REQUEST)
 from quiz import Quiz, Animals
 
 
-bot = AsyncTeleBot(TOKEN)
+bot = AsyncTeleBot(TOKEN, state_storage=StateRedisStorage())
 rs = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
 log = telebot.logger
 log.setLevel(logging.ERROR)
+
 STATIC_DIR = os.path.join(Path(__file__).resolve().parent, 'static')
+REVIEW_DIR = os.path.join(Path(__file__).resolve().parent, 'review')
+MANAGER_ID = int(MANAGER_ID)  # Присвоить интовый айди сотрудника для связи
 
 quiz = Quiz()
-MANAGER_ID = int(MANAGER_ID)  # Присвоить интовый айди сотрудника для связи
 
 
 def get_user_question_number(cid):
@@ -53,6 +58,10 @@ def set_user_question_number(cid, value):
 @bot.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     cid = str(message.chat.id)
+
+    rs.hset('user_id', cid, str(message.from_user.id))  # может забагаться если смениться id чата
+
+    await bot.delete_state(rs.hget('user_id', cid), message.chat.id)
 
     if rs.llen(cid):
         try:
@@ -129,6 +138,8 @@ async def reset(message: types.Message, not_silent=True):
 
     set_user_question_number(cid, 0)
     rs.hset('user_data', cid, '0000')
+
+    await bot.delete_state(rs.hget('user_id', cid), message.chat.id)
 
     await asyncio.sleep(3)
     await next_question(message)
@@ -364,14 +375,12 @@ async def opeka_info(message: types.Message):
     rs.lpush(cid, m.message_id)
 
 
-async def contact(message: types.Message):
+async def contact_email(message: types.Message):  # TODO можно сделать переделку емайл после проверки по запросу
     cid = str(message.chat.id)
-
-    user_name = f'@{message.chat.username}'
-    if not user_name:
-        user_name = message.chat.first_name
-
     markup = telebot.util.quick_markup({'В начало': {'callback_data': 'start'}})
+
+    await clean_media(cid)
+
     if rs.get(cid+'var') == '1':
         text = 'Вы уже оставили заявку на связь с вами. Следующую заявку можно сделать через сутки.'
         await bot.edit_message_text(
@@ -381,27 +390,80 @@ async def contact(message: types.Message):
             reply_markup=markup
         )
     else:
-        result = int(rs.hget('user_data', cid))
-        data = Animals.get_animal_data(result)
-
-        text = f'Пользователь {user_name} оставил заявку на связь\. Результат теста \- {result} {data["name"]}'
-        await bot.send_message(
-            chat_id=MANAGER_ID,
-            text=text,
-            disable_notification=True
-        )
-
-        await bot.edit_message_text(  # TODO
+        await bot.set_state(rs.hget('user_id', cid), States.contact_response, message.chat.id)
+        await bot.edit_message_text(
             chat_id=cid,
             message_id=int(rs.lindex(cid, 0)),
-            text='Ваша заявка на связь отправлена сотруднику.',
-            reply_markup=markup
+            text='Напишите ваш емайл для обратной связи. Будьте аккуратны! '
+                 'В случае ошибки, повторный запрос можно будет сделать только через сутки.',
         )
-        rs.set(cid+'var', '1', ex=86400)
 
 
+@bot.message_handler(state=States.contact_response)
+async def contact(message: types.Message):
+    cid = str(message.chat.id)
+
+    user_name = f'@{message.chat.username}'
+    if not user_name:
+        user_name = message.chat.first_name
+
+    markup = telebot.util.quick_markup({'В начало': {'callback_data': 'start'}})
+    result = int(rs.hget('user_data', cid))
+    animal = Animals.get_animal_data(result)
+
+    text = (f'Пользователь {user_name} оставил заявку на связь. Адрес электронной почты - {message.text}. '
+            f'Результат теста - {result} {animal["name"]}.')
+
+    await bot.send_message(
+        chat_id=MANAGER_ID,
+        text=text,
+        disable_notification=True
+    )
+
+    await bot.edit_message_text(
+        chat_id=cid,
+        message_id=int(rs.lindex(cid, 0)),
+        text='Ваша заявка на связь отправлена сотруднику.',
+        reply_markup=markup
+    )
+    rs.set(cid+'var', '1', ex=86400)
+
+    await bot.delete_state(rs.hget('user_id', cid), message.chat.id)
+
+
+async def ask_review(message: types.Message):
+    cid = str(message.chat.id)
+
+    await clean_media(cid)
+
+    await bot.set_state(rs.hget('user_id', cid), States.review_response, message.chat.id)
+    m = await bot.send_message(
+        chat_id=cid,
+        text='Напишите свой отзыв о нас. Нам интересно узнать ваше мнение! ' + u'🐹',
+        disable_notification=True,
+    )
+    rs.lpush(cid, m.message_id)
+
+
+@bot.message_handler(state=States.review_response)
 async def review(message: types.Message):
-    ...
+    cid = str(message.chat.id)
+    markup = telebot.util.quick_markup({'В начало': {'callback_data': 'start'}})
+
+    date = str(datetime.datetime.now().date()) + '.txt'
+    url = os.path.join(REVIEW_DIR, date)
+
+    with open(url, 'wt') as f:
+        f.writelines(message.text)
+
+    m = await bot.send_message(
+        chat_id=cid,
+        text='Спасибо ' + u'☺️',
+        reply_markup=markup,
+        disable_notification=True
+    )
+    await bot.delete_state(rs.hget('user_id', cid), message.chat.id)
+    rs.lpush(cid, m.message_id)
 
 
 # @bot.message_handler(commands=['repost'])  # FIXME дебаг команда, убрать после настройки
@@ -442,9 +504,9 @@ async def callback_handler(callback: types.CallbackQuery):
     elif data == 'animal':
         await show_animal(msg)
     elif data == 'review':
-        await review(msg)
+        await ask_review(msg)
     elif data == 'contact':
-        await contact(msg)
+        await contact_email(msg)
     elif data == 'opeka_info':
         await opeka_info(msg)
     else:  # должны быть цифровые call
@@ -453,6 +515,9 @@ async def callback_handler(callback: types.CallbackQuery):
         except Exception as e:
             log.debug(e)
         await answer_handle(msg, data)
+
+
+bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
 
 if __name__ == '__main__':

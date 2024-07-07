@@ -5,14 +5,11 @@ import time
 from random import randrange
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from config import REDIS_HOST, REDIS_PORT
-from datetime import datetime, timedelta
+from config import REDIS_HOST, REDIS_PORT, ZOO_PARSER_UPDATE_FREQUENCY, ZOO_PARSER_SELENIUM_WAITING_TIME
+from datetime import datetime
 
 
 rs = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
-
-UPDATE_FREQUENCY = timedelta(days=7)
-SELENIUM_WAITING = 10  # waiting for loading in seconds
 
 
 def _init_():
@@ -25,10 +22,10 @@ def _init_():
     else:
         previous_date = datetime.strptime('2020-01-01', '%Y-%m-%d').date()
 
-    if (date - previous_date) >= UPDATE_FREQUENCY:  # update frequency
+    if (date - previous_date) >= ZOO_PARSER_UPDATE_FREQUENCY:  # update frequency
         with webdriver.Firefox() as driver:
             driver.get(url)
-            time.sleep(SELENIUM_WAITING)
+            time.sleep(ZOO_PARSER_SELENIUM_WAITING_TIME)
             with open('zoo_guardianship', 'wt') as f:
                 f.write(json.dumps(driver.page_source))
                 soup = BeautifulSoup(driver.page_source, 'lxml')
