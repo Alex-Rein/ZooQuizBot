@@ -57,7 +57,7 @@ class Quiz:  # класс с викториной
 
 class Animals:  # класс для хранения и вывода результата викторины
     @staticmethod
-    def get_animal_data(result):
+    def get_animal_data(result: int):
         prefix = ''
         if result >= 1000:  # s - стайное, o - одиночное, // p - плотоядное, t - травоядное
             if (result - 1000) >= 100:  # group/feature

@@ -22,40 +22,48 @@ from pathlib import Path
 from random import randrange
 
 
-from config import TOKEN, REDIS_HOST, REDIS_PORT, VKTOKEN, VK_APP_ID, VK_SERVICE_KEY, VK_SECRET_KEY, VK_REQUEST
+from config import (TOKEN, REDIS_HOST, REDIS_PORT, MANAGER_ID,
+                    VKTOKEN, VK_APP_ID, VK_SERVICE_KEY, VK_SECRET_KEY, VK_REQUEST)
 from quiz import Quiz, Animals
 
 
 bot = AsyncTeleBot(TOKEN)
 rs = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
-log = logging.getLogger()
-log.setLevel(logging.DEBUG)
+log = telebot.logger
+log.setLevel(logging.ERROR)
 STATIC_DIR = os.path.join(Path(__file__).resolve().parent, 'static')
 
 quiz = Quiz()
+MANAGER_ID = int(MANAGER_ID)  # Присвоить интовый айди сотрудника для связи
 
 
-def get_user_question_number(uid):
-    users_question = rs.hget('user_question', uid)
+def get_user_question_number(cid):
+    users_question = rs.hget('user_question', cid)
     if users_question is None:
-        rs.hset('user_question', mapping={uid: '0'})
+        rs.hset('user_question', mapping={cid: '0'})
         return 0
     return int(users_question)
 
 
-def set_user_question_number(uid, value):
-    uid, value = str(uid), str(value)
-    rs.hset('user_question', mapping={uid: value})
+def set_user_question_number(cid, value):
+    cid, value = str(cid), str(value)
+    rs.hset('user_question', mapping={cid: value})
 
 
 @bot.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     cid = str(message.chat.id)
-    await clean(cid)
 
+    if rs.llen(cid):
+        try:
+            await bot.delete_message(cid, int(rs.lindex(cid, 0)))
+        except Exception as e:
+            log.error(e)
+            rs.ltrim(cid, 0, rs.llen(cid))
+
+    await clean(cid)
     if rs.llen(cid + 'media') > 0:
         await clean_media(cid)
-    await asyncio.sleep(0.2)
 
     if rs.hget('user_data', cid) is None:
         rs.hset('user_data', cid, '0000')
@@ -92,7 +100,7 @@ async def reset(message: types.Message, not_silent=True):
     try:
         await bot.delete_message(
             chat_id=cid,
-            message_id=int(rs.lindex(cid+'media', -1))
+            message_id=int(rs.lindex(cid+'media', 0))
         )
     except Exception:
         pass
@@ -103,7 +111,7 @@ async def reset(message: types.Message, not_silent=True):
     try:
         await bot.delete_message(
             chat_id=cid,
-            message_id=int(rs.lindex(cid+'media', -1))
+            message_id=int(rs.lindex(cid+'media', 0))
         )
     except Exception:
         pass
@@ -163,7 +171,9 @@ async def clean_media(cid):
 async def next_question(message: types.Message):
     cid = str(message.chat.id)
     q_num = get_user_question_number(cid)
+
     await clean_media(cid)
+
     if q_num == -1:
         await get_quiz_result(message)
         return
@@ -172,11 +182,10 @@ async def next_question(message: types.Message):
         await bot.send_chat_action(cid, 'typing', timeout=1)
         await bot.edit_message_text(
             chat_id=message.chat.id,
-            message_id=int(rs.lindex(cid, -1)),
+            message_id=int(rs.lindex(cid, 0)),
             text='Это был последний вопрос, а сейчас посмотрим'
             ' что у нас получилось :)',
         )
-
         set_user_question_number(cid, '-1')  # Метка что опрос пройден до конца
         await asyncio.sleep(2)
         await get_quiz_result(message)
@@ -205,12 +214,12 @@ async def next_question(message: types.Message):
 
     await bot.send_chat_action(cid, 'typing', timeout=1)
 
-    length = rs.llen(cid)  # Должен быть 0 при запуске викторины
+    length = rs.llen(cid)  # Должен быть 0 при запуске викторины, но бывает ломается
     if length:
         try:
             await bot.edit_message_text(
                 chat_id=cid,
-                message_id=int(rs.lindex(cid, -1)),
+                message_id=int(rs.lindex(cid, 0)),
                 text=text,
                 reply_markup=markup
             )
@@ -280,7 +289,7 @@ async def get_quiz_result(message: types.Message):
     if rs.llen(cid):
         await bot.delete_message(
             chat_id=cid,
-            message_id=int(rs.lindex(cid, -1))
+            message_id=int(rs.lindex(cid, 0))
         )
 
     link = os.path.join(STATIC_DIR, data['image'])
@@ -295,46 +304,13 @@ async def get_quiz_result(message: types.Message):
         )
     rs.lpush(f'{cid}media', m.message_id)
 
-    # await bot.send_message(
-    #     cid,
-    #     f'Победа! Картинка будет тут. Счет {result}',
-    #     disable_notification=True
-    # )
-
-# =========================================================
-"""
-
-    markup = telebot.util.quick_markup({
-        'Викторина!': {'callback_data': 'quiz'},
-        'Картинки!': {'callback_data': 'animal'},
-    })
-
-    caption = ('Привет, %s! Предлагаю поучавствовать '
-               'в небольшой викторине <strong>«Какое у вас тотемное животное?»</strong> '
-               'Это носит развлекательный характер и делается для того чтобы '
-               'немного прикоснуться к миру братьев меньших.'
-               % message.chat.first_name)
-
-    pic = os.path.join(STATIC_DIR, 'MZoo-logo-hor-rus-preview-RGB.jpg')
-
-    with open(pic, 'rb') as logo:  # будет ли работать как и должно?
-        m = await bot.send_photo(
-            message.chat.id,
-            photo=logo,
-            caption=caption,
-            parse_mode='HTML',
-            reply_markup=markup,
-            disable_notification=True
-        )
-    rs.lpush('{0}media'.format(cid), m.message_id)
-    
-"""
-#   =================================================
-
 
 async def show_animal(message: types.Message):
     cid = str(message.chat.id)
     animal_name, animal_pic_url = zoo_parser.random_animal()
+
+    if not animal_pic_url:
+        animal_pic_url = os.path.join(STATIC_DIR, 'Нет_фото.png')
 
     kind_words = ('красивый', 'интересный', 'необычный', 'забавный', 'дикий')
     rand = randrange(len(kind_words))
@@ -352,23 +328,26 @@ async def show_animal(message: types.Message):
         caption=caption,
         parse_mode='HTML'
     )
-    await bot.edit_message_media(
-        media=media,
-        chat_id=cid,
-        message_id=int(rs.lindex(cid + 'media', -1)),
-        reply_markup=markup
-    )
+    if media:
+        await bot.edit_message_media(
+            media=media,
+            chat_id=cid,
+            message_id=int(rs.lindex(cid + 'media', 0)),
+            reply_markup=markup
+        )
 
 
 async def opeka_info(message: types.Message):
     cid = str(message.chat.id)
+    await clean_media(cid)
 
     text = ('<strong>Московский Зоопарк</strong> представляет программу опеки, благодаря которой '
             'вы можете оказать помощь в содержании различных видов животных. '
             'Стать участником программы <i>«Клуб друзей зоопарка»</i> значит '
             'позаботиться о ком то из его обитателей, помочь зоопарку в развитии '
             'и внести личный вклад в их дело сохранения природы и биоразнообразия Земли. '
-            'Подробнее можно посмотреть <a href="https://moscowzoo.ru/about/guardianship">тут</a>.')
+            'Подробнее можно посмотреть <a href="https://moscowzoo.ru/about/guardianship">тут</a>.\n'
+            'Заявку но связь с сотрудником зоопарка можно оставить по кнопке "Связаться с нами".')
 
     markup = telebot.util.quick_markup({
         'Связаться с нами': {'callback_data': 'contact'},
@@ -383,6 +362,46 @@ async def opeka_info(message: types.Message):
         parse_mode='HTML',
     )
     rs.lpush(cid, m.message_id)
+
+
+async def contact(message: types.Message):
+    cid = str(message.chat.id)
+
+    user_name = f'@{message.chat.username}'
+    if not user_name:
+        user_name = message.chat.first_name
+
+    markup = telebot.util.quick_markup({'В начало': {'callback_data': 'start'}})
+    if rs.get(cid+'var') == '1':
+        text = 'Вы уже оставили заявку на связь с вами. Следующую заявку можно сделать через сутки.'
+        await bot.edit_message_text(
+            chat_id=cid,
+            message_id=int(rs.lindex(cid, 0)),
+            text=text,
+            reply_markup=markup
+        )
+    else:
+        result = int(rs.hget('user_data', cid))
+        data = Animals.get_animal_data(result)
+
+        text = f'Пользователь {user_name} оставил заявку на связь\. Результат теста \- {result} {data["name"]}'
+        await bot.send_message(
+            chat_id=MANAGER_ID,
+            text=text,
+            disable_notification=True
+        )
+
+        await bot.edit_message_text(  # TODO
+            chat_id=cid,
+            message_id=int(rs.lindex(cid, 0)),
+            text='Ваша заявка на связь отправлена сотруднику.',
+            reply_markup=markup
+        )
+        rs.set(cid+'var', '1', ex=86400)
+
+
+async def review(message: types.Message):
+    ...
 
 
 # @bot.message_handler(commands=['repost'])  # FIXME дебаг команда, убрать после настройки
@@ -423,9 +442,9 @@ async def callback_handler(callback: types.CallbackQuery):
     elif data == 'animal':
         await show_animal(msg)
     elif data == 'review':
-        ...  # TODO
+        await review(msg)
     elif data == 'contact':
-        ...  # TODO
+        await contact(msg)
     elif data == 'opeka_info':
         await opeka_info(msg)
     else:  # должны быть цифровые call
